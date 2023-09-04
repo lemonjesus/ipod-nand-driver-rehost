@@ -8,15 +8,16 @@
 #include <string.h>
 #include <signal.h>
 
-#include "file-cow.h"
+#include "ff-cow.h"
 
-#define ENABLE_ACCESS_LOGGING 0
+#define ENABLE_ACCESS_LOGGING 1
 #define LOG_ACCESS if(ENABLE_ACCESS_LOGGING) printf
 
 static void* progmem;
 static void* staticmem;
 static uint32_t NAND_IDs[8] = {0xa5d5d589, 0xa5d5d589, 0xa5d5d589, 0xa5d5d589, 0, 0, 0, 0};
 
+#define BANK_COUNT 4
 #define PAGE_SIZE 2048
 
 cow_file* nand_bank[4];
@@ -74,7 +75,7 @@ uint32_t FIL_readNoECC(uint16_t bank, uint32_t page, uint8_t* data_buffer, uint8
     cow_read(nand_bank[bank], data_buffer, page * PAGE_SIZE, PAGE_SIZE);
     cow_read(nand_spare[bank], meta_buffer, page * 16, 16);
 
-    return is_page_all_FFs(meta_buffer);
+    return 0;
 }
 
 uint32_t FIL_readSequentialPages(uint16_t bank, uint32_t page, uint8_t* data_buffers, uint8_t* meta_buffers, uint8_t* correctedBits) {
@@ -97,27 +98,58 @@ uint32_t FIL_readSinglePageNoMetadata(uint16_t bank, uint32_t page, uint8_t* dat
 
     cow_read(nand_bank[bank], data_buffer, page * PAGE_SIZE, PAGE_SIZE);
 
-    return 0;
+    return is_page_all_FFs(data_buffer);
 }
 
 uint32_t FIL_writeScatteredPages(uint16_t* banks, uint32_t* pages, uint8_t* data_buffers, uint8_t* meta_buffers, uint16_t count) {
     LOG_ACCESS("FIL_writeScatteredPages(%p, %p, %p, %p, %d)\n", banks, pages, data_buffers, meta_buffers, count);
+
+    for (int i = 0; i < count; i++) {
+        cow_write(nand_bank[banks[i]], data_buffers, pages[i] * PAGE_SIZE, PAGE_SIZE);
+        cow_write(nand_spare[banks[i]], meta_buffers, pages[i] * 16, 16);
+    }
+
+    return 0;
 }
 
-uint32_t FIL_writeSequentialPages(uint16_t* banks, uint32_t* pages, uint8_t* data_buffers, uint8_t* meta_buffers, uint16_t count) {
-    LOG_ACCESS("FIL_writeSequentialPages(%p, %p, %p, %p, %d)\n", banks, pages, data_buffers, meta_buffers, count);
-}
 
 uint32_t FIL_writeSinglePage(uint16_t bank, uint32_t page, uint8_t* data_buffer, uint8_t* meta_buffer) {
     LOG_ACCESS("FIL_writeSinglePage(0x%x, 0x%x, %p, %p)\n", bank, page, data_buffer, meta_buffer);
+
+    cow_write(nand_bank[bank], data_buffer, page * PAGE_SIZE, PAGE_SIZE);
+    cow_write(nand_spare[bank], meta_buffer, page * 16, 16);
+
+    return 0;
+}
+
+uint32_t FIL_writeSequentialPages(uint32_t* pages, uint8_t* data_buffers, uint8_t* meta_buffers, uint16_t count, uint8_t aligned) {
+    LOG_ACCESS("FIL_writeSequentialPages(%p, %p, %p, %d, %d)\n", pages, data_buffers, meta_buffers, count, aligned);
+
+    for (int i = 0; i < count; i += BANK_COUNT) {
+        for (int bank = 0; bank < BANK_COUNT; bank++) {
+            uint8_t* tmpDataBuf = data_buffers + ((i + bank) * PAGE_SIZE);
+            uint8_t* tmpMetaBuf = meta_buffers + ((i + bank) * 12);
+
+            LOG_ACCESS("\t");
+            FIL_writeSinglePage(bank, pages[i + bank], tmpDataBuf, tmpMetaBuf);
+        }
+    }
+
+    return 0;
 }
 
 uint32_t FIL_writeSinglePageNoMetadata(uint16_t bank, uint32_t page, uint8_t* data_buffer) {
     LOG_ACCESS("FIL_writeSinglePageNoMetadata(0x%x, 0x%x, %p)\n", bank, page, data_buffer);
+
+    cow_write(nand_bank[bank], data_buffer, page * PAGE_SIZE, PAGE_SIZE);
+
+    return 0;
 }
 
 uint32_t FIL_eraseSingleBlock(uint16_t bank, uint16_t block) {
     LOG_ACCESS("FIL_eraseSingleBlock(0x%x, 0x%x)\n", bank, block);
+
+    return 0;
 }
 
 uint32_t FIL_eraseSequentialBlocks(uint16_t* banks, uint16_t* blocks, uint32_t count) {
@@ -189,6 +221,7 @@ int main() {
     const char* deviceinfobbt = "DEVICEINFOBBT";
     ((uint32_t*) (progmem + 0x5c08))[0] = nanddriversign;
     ((uint32_t*) (progmem + 0x5650))[0] = deviceinfobbt;
+    ((uint32_t*) (progmem + 0x5a9c))[0] = deviceinfobbt;
 
     // patch out some static function pointers
     // VFL CTX stuff
@@ -211,13 +244,13 @@ int main() {
     uint32_t ret = AND_Init(&nand_lba_out, &pages_per_block_exp_out);
 
     // print the results
-    // printf("ret: %d\n", ret);
-    // printf("nand_lba_out: %d\n", nand_lba_out);
-    // printf("pages_per_block_exp_out: %d\n", pages_per_block_exp_out);
+    printf("ret: %d\n", ret);
+    printf("nand_lba_out: %d\n", nand_lba_out);
+    printf("pages_per_block_exp_out: %d\n", pages_per_block_exp_out);
 
     // read the first page
-    uint8_t* buffer = malloc(0x800);
-    // FILE* ftldump = fopen("ftl-dump.bin", "wb");
+    // uint8_t* buffer = malloc(0x800);
+    // // FILE* ftldump = fopen("ftl-dump.bin", "wb");
 
     // int i = 0;
     // while(1) {
