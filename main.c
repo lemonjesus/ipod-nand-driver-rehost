@@ -8,7 +8,7 @@
 #include <string.h>
 #include <signal.h>
 
-#include "ff-cow.h"
+#include "file-cow.h"
 
 #define ENABLE_ACCESS_LOGGING 1
 #define LOG_ACCESS if(ENABLE_ACCESS_LOGGING) printf
@@ -206,6 +206,7 @@ int main() {
     ((uint32_t*) (progmem + 0x75f4))[0] = FIL_eraseSingleBlock;
     ((uint32_t*) (progmem + 0x75f8))[0] = FIL_eraseSequentialBlocks;
 
+    // TODO: Fix this particular mess:
     // patch out the memory allocator with host malloc (staticmem @ 0x84c0 = *malloc)
     // I'm making a struct and pointing everything to my malloc and it works even though
     // I never use the struct. it probably puts it in a correct place on the stack coincidentally.
@@ -249,20 +250,18 @@ int main() {
     printf("pages_per_block_exp_out: %d\n", pages_per_block_exp_out);
 
     // read the first page
-    // uint8_t* buffer = malloc(0x800);
-    // // FILE* ftldump = fopen("ftl-dump.bin", "wb");
+    uint8_t* buffer = malloc(PAGE_SIZE);
+    FILE* ftldump = fopen("ftl-dump.bin", "wb");
 
-    // int i = 0;
-    // while(1) {
-    //     ret = FTL_Read(i, 1, buffer);
-    //     if(ret != 0) {
-    //         // printf("FTL_Read returned %d\n", ret);
-    //         return 1;
-    //     }
-    //     fwrite(buffer, 1, 0x800, stdout);
-    //     i++;
-    // }
-    // fclose(ftldump);
-
-    return 0;
+    int i = 0;
+    while(1) {
+        ret = FTL_Read(i, 1, buffer);
+        if(ret != 0) {
+            printf("FTL_Read returned %d\n", ret);
+            fclose(ftldump);
+            return 0;
+        }
+        fwrite(buffer, 1, PAGE_SIZE, ftldump);
+        i++;
+    }
 }
