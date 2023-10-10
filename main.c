@@ -206,16 +206,12 @@ int main() {
     ((uint32_t*) (progmem + 0x75f4))[0] = FIL_eraseSingleBlock;
     ((uint32_t*) (progmem + 0x75f8))[0] = FIL_eraseSequentialBlocks;
 
-    // TODO: Fix this particular mess:
     // patch out the memory allocator with host malloc (staticmem @ 0x84c0 = *malloc)
-    // I'm making a struct and pointing everything to my malloc and it works even though
-    // I never use the struct. it probably puts it in a correct place on the stack coincidentally.
     struct mallocs {
         uint32_t malloc1;
         uint32_t malloc2;
     } mallocs = {&ipod_malloc, &ipod_malloc};
-    uint32_t malloc_addr = (uint32_t) &ipod_malloc;
-    ((uint32_t*) (staticmem + 0x84c0 - 0x8000))[0] = &malloc_addr;
+    ((uint32_t*) (staticmem + 0x84c0 - 0x8000))[0] = &mallocs;
 
     // patch out some driver signature pointers
     const char* nanddriversign = "NANDDRIVERSIGN";
