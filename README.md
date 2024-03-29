@@ -20,7 +20,25 @@ This program also requires the NAND contents of the iPod. The current best way t
 
 ## Purpose and Uses
 
-This is useful for data recovery, as I've been able to mount filesystems from the image and read some files. See the code for how to do this. Basically, you call `FTL_Read()` with increasing page numbers until it returns non-zero and write them to a large image file.
+This is useful for data recovery, as I've been able to mount filesystems from the image and read some files. See the code for how to do this. Basically, you call `FTL_Read()` with increasing page numbers until it returns non-zero and write them to a large image file:
+
+```c
+// read the first page
+uint8_t* buffer = malloc(PAGE_SIZE);
+FILE* ftldump = fopen("ftl-dump.bin", "wb");
+
+int i = 0;
+while(1) {
+    ret = FTL_Read(i, 1, buffer);
+    if(ret != 0) {
+        printf("FTL_Read returned %d\n", ret);
+        fclose(ftldump);
+        return 0;
+    }
+    fwrite(buffer, 1, PAGE_SIZE, ftldump);
+    i++;
+}
+```
 
 ## Customization
 

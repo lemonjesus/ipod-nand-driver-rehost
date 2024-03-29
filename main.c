@@ -95,8 +95,9 @@ uint32_t FIL_readScatteredPages(uint16_t* banks, uint32_t* pages, uint8_t* data_
     LOG_ACCESS("FIL_readScatteredPages(%p, %p, %p, %p, %d, %p)\n", banks, pages, data_buffers, meta_buffers, count, correctedBits);
 
     for (int i = 0; i < count; i++) {
-        cow_read(nand_bank[banks[i]], data_buffers, pages[i] * PAGE_SIZE, PAGE_SIZE);
-        cow_read(nand_spare[banks[i]], meta_buffers, pages[i] * 16, 16);
+        LOG_ACCESS("\tread page 0x%x from bank %d\n", pages[i], banks[i]);
+        cow_read(nand_bank[banks[i]], data_buffers + i * PAGE_SIZE, pages[i] * PAGE_SIZE, PAGE_SIZE);
+        cow_read(nand_spare[banks[i]], meta_buffers + i * PAGE_SIZE, pages[i] * 16, 16);
     }
     return is_page_all_FFs(meta_buffers);
 }
@@ -113,8 +114,9 @@ uint32_t FIL_writeScatteredPages(uint16_t* banks, uint32_t* pages, uint8_t* data
     LOG_ACCESS("FIL_writeScatteredPages(%p, %p, %p, %p, %d)\n", banks, pages, data_buffers, meta_buffers, count);
 
     for (int i = 0; i < count; i++) {
-        cow_write(nand_bank[banks[i]], data_buffers, pages[i] * PAGE_SIZE, PAGE_SIZE);
-        cow_write(nand_spare[banks[i]], meta_buffers, pages[i] * 16, 16);
+        LOG_ACCESS("\twrite page 0x%x from bank %d\n", pages[i], banks[i]);
+        cow_write(nand_bank[banks[i]], data_buffers + i * PAGE_SIZE, pages[i] * PAGE_SIZE, PAGE_SIZE);
+        cow_write(nand_spare[banks[i]], meta_buffers + i * PAGE_SIZE, pages[i] * 16, 16);
     }
 
     return 0;
@@ -247,30 +249,74 @@ int main() {
     // load up the relevant pointers to "exported" functions
     int (*AND_Init)(uint32_t*, uint16_t*) = (int (*)(uint32_t*, uint16_t*)) (progmem + 0x5c85);
     int (*FTL_Read)(uint32_t, uint32_t, uint8_t*) = (int (*)(uint32_t, uint32_t, uint8_t*)) (progmem + 0x126d);
+    int (*FTL_Write)(uint32_t, uint32_t, uint8_t*) = (int (*)(uint32_t, uint32_t, uint8_t*)) (progmem + 0x2ecd);
 
-    // call the function
     uint32_t nand_lba_out;
     uint16_t pages_per_block_exp_out;
-    uint32_t ret = AND_Init(&nand_lba_out, &pages_per_block_exp_out);
 
-    // print the results
-    printf("ret: %d\n", ret);
+    // initialize the nand driver
+    uint32_t ret = AND_Init(&nand_lba_out, &pages_per_block_exp_out);
+    printf("AND_Init ret: %d\n", ret);
     printf("nand_lba_out: %d\n", nand_lba_out);
     printf("pages_per_block_exp_out: %d\n", pages_per_block_exp_out);
+    printf("NAND SIZE: %2d.%2d\n", (nand_lba_out << 2) >> 0x14, 0x000FFFFF & nand_lba_out << 2);
 
-    // read the first page
-    uint8_t* buffer = malloc(PAGE_SIZE);
-    FILE* ftldump = fopen("ftl-dump.bin", "wb");
+    FILE* random = fopen("/dev/urandom", "rb");
+    void* expected_full_page = malloc(PAGE_SIZE);
+    void* expected_half_page = malloc(PAGE_SIZE >> 1);
+    void* expected_double_page = malloc(PAGE_SIZE << 1);
+    void* actual = malloc(PAGE_SIZE << 1);
+    fread(expected_full_page, 1, PAGE_SIZE, random);
+    fread(expected_half_page, 1, PAGE_SIZE >> 1, random);
+    fread(expected_double_page, 1, PAGE_SIZE << 1, random);
+    
 
-    int i = 0;
-    while(1) {
-        ret = FTL_Read(i, 1, buffer);
-        if(ret != 0) {
-            printf("FTL_Read returned %d\n", ret);
-            fclose(ftldump);
-            return 0;
+    uint16_t random_page_1, random_page_2;
+    fread(&random_page_1, 1, 2, random);
+    fread(&random_page_2, 1, 2, random);
+
+    uint16_t pages_to_test[3] = {0, random_page_1, random_page_2};
+    
+    for(int i = 0; i < 3; i ++) {
+        uint32_t page = pages_to_test[i];
+        printf("Test #%d invloves page 0x%04X:\n", i, page);
+
+        // write a full page, read it back, and compare
+        ret = FTL_Write(page, 1, expected_full_page);
+        if(ret != 0) printf("\tFTL_Write returned %d\n", ret);
+        ret = FTL_Read(page, 1, actual);
+        if(ret != 0) printf("\tFTL_Read returned %d\n", ret);
+        if(memcmp(expected_full_page, actual, PAGE_SIZE) != 0) {
+            printf("\tFULL PAGE MISMATCH\n");
+        } else {
+            printf("\tFULL PAGE MATCH!\n");
         }
-        fwrite(buffer, 1, PAGE_SIZE, ftldump);
-        i++;
+
+        // write a half page, read it back, and compare
+        ret = FTL_Write(page, 1, expected_half_page);
+        if(ret != 0) printf("\tFTL_Write returned %d\n", ret);
+        ret = FTL_Read(page, 1, actual);
+        if(ret != 0) printf("\tFTL_Read returned %d\n", ret);
+        if(memcmp(expected_half_page, actual, PAGE_SIZE >> 1) != 0) {
+            printf("\tHALF PAGE MISMATCH\n");
+        } else {
+            printf("\tHALF PAGE MATCH!\n");
+        }
+
+        // write a double page, read it back, and compare
+        ret = FTL_Write(page, 2, expected_double_page);
+        if(ret != 0) printf("\tFTL_Write returned %d\n", ret);
+        ret = FTL_Read(page, 2, actual);
+        if(ret != 0) printf("\tFTL_Read returned %d\n", ret);
+        if(memcmp(expected_double_page, actual, PAGE_SIZE << 1) != 0) {
+            printf("\tDOUBLE PAGE MISMATCH\n");
+        } else {
+            printf("\tDOUBLE PAGE MATCH!\n");
+        }
     }
+    
+    fclose(random);
+    free(expected_full_page);
+    free(expected_half_page);
+    free(expected_double_page);
 }
