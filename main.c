@@ -10,8 +10,10 @@
 
 #include "file-cow.h"
 
-#define ENABLE_ACCESS_LOGGING 1
+#define ENABLE_ACCESS_LOGGING 0
+#define ENABLE_MEMORY_LOGGING 0
 #define LOG_ACCESS if(ENABLE_ACCESS_LOGGING) printf
+#define LOG_MEMORY if(ENABLE_MEMORY_LOGGING) printf
 
 static void* progmem;
 static void* staticmem;
@@ -33,7 +35,13 @@ void* allocate_fixed(uint32_t addr, int size) {
 }
 
 void* ipod_malloc(void* trash, int size) {
+    LOG_MEMORY("ipod_malloc(%d)\n", size);
     return calloc(1, size);
+}
+
+void ipod_free(void* trash, void* ptr) {
+    LOG_MEMORY("ipod_free(%p)\n", ptr);
+    free(ptr);
 }
 
 void patch_function(uint32_t offset, void* function) {
@@ -206,12 +214,17 @@ int main() {
     ((uint32_t*) (progmem + 0x75f4))[0] = FIL_eraseSingleBlock;
     ((uint32_t*) (progmem + 0x75f8))[0] = FIL_eraseSequentialBlocks;
 
-    // patch out the memory allocator with host malloc (staticmem @ 0x84c0 = *malloc)
-    struct mallocs {
+    // patch out the memory services with host equivalents
+    // 0x84c0 is a pointer to the memory functions. three of them are currently
+    // malloc because I'm not exactly sure what they are otherwise right now.
+    struct memory_services {
         uint32_t malloc1;
         uint32_t malloc2;
-    } mallocs = {&ipod_malloc, &ipod_malloc};
-    ((uint32_t*) (staticmem + 0x84c0 - 0x8000))[0] = &mallocs;
+        uint32_t malloc3;
+        uint32_t free;
+    } memory_services = {&ipod_malloc, &ipod_malloc, &ipod_malloc, &ipod_free};
+    uint32_t malloc_addr = (uint32_t) &ipod_malloc;
+    ((uint32_t*) (staticmem + 0x84c0 - 0x8000))[0] = &malloc_addr;
 
     // patch out some driver signature pointers
     const char* nanddriversign = "NANDDRIVERSIGN";
